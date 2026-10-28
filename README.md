@@ -1501,6 +1501,14 @@ Red 성공 + Blue 성공
 
 평가 결과는 다음과 같다.
 
+<p align="center">
+  <img src="images/06_gazebo_sync_async_comparison.png" width="1000">
+</p>
+
+<p align="center">
+  <em>Coverage30 Gemma와 Official AsyncVLA의 Sync / Async 비교 결과</em>
+</p>
+
 | Model | Runtime | 1차 평가 | 동일 Batch 재평가 |
 |---|---|---:|---:|
 | Gemma | Sync | **20 / 20** | **20 / 20** |
@@ -1952,6 +1960,7 @@ sensor_msgs/Image
 
 desktop의 policy node는 해당 topic을 subscribe하여 최신 RGB frame과 원본 message timestamp를 저장한다.
 
+```markdown
 실제 연결 시험에서는 다음 조건으로 RGB stream을 확인하였다.
 
 ```text
@@ -1961,7 +1970,16 @@ Source Timestamp FPS: 12.542 FPS
 Maximum Receive Gap : 0.352 s
 ```
 
+<p align="center">
+  <img src="images/08_limo_rgb_camera.jpg" width="640">
+</p>
+
+<p align="center">
+  <em>AgileX LIMO Pro의 RGB camera를 통해 실제 수신한 frame</em>
+</p>
+
 이 RGB stream은 Slow VLA와 Fast Edge 모두에서 사용된다.
+```
 
 ---
 
@@ -2287,6 +2305,355 @@ Physical Robot Motion
 까지 연결된 상태이다.
 
 다만 **자연어 명령에 따른 안정적인 실제 목표 도착은 아직 완료되지 않았다.**
+
+---
+
+## 9. LIMO Pro 실물 주행 실험
+
+ROS 2 기반 inference pipeline과 Safety Guard를 연결한 이후, 실제 AgileX LIMO Pro에서 단계적인 물리 구동 실험을 수행하였다.
+
+실물 실험은 처음부터 자연어 기반 목표 도착을 시도하지 않고 다음 순서로 진행하였다.
+
+```text
+Command Sign 확인
+      ↓
+저속 이동 및 정지 검증
+      ↓
+Learned Policy 기반 접근
+      ↓
+Safety Guard 동작 확인
+```
+
+---
+
+### 9.1 최초 저속 구동 검증
+
+먼저 linear / angular velocity의 방향과 정지 동작이 실제 LIMO Pro에서 예상대로 동작하는지 확인하기 위해 저속 교정 실험을 수행하였다.
+
+결과는 다음과 같다.
+
+| 항목 | 결과 |
+|---|---:|
+| Motion Duration | 2.002 s |
+| Command Count | 38 |
+| Odometry Travel | 0.146 m |
+| Yaw Change | -13.82° |
+
+약 2초 동안 제한된 속도 명령을 전달하여 실제 로봇의 이동 방향과 회전 방향을 확인하였다.
+
+실험 종료 후 zero command를 연속적으로 전달하여 로봇이 정지 상태로 복귀하는 것을 확인하였다.
+
+```text
+Low-speed Command
+       ↓
+LIMO Motion
+       ↓
+Odometry 확인
+       ↓
+Zero Command
+       ↓
+Stop
+```
+
+이 실험의 목적은 navigation 성능 평가가 아니라 **실제 로봇에서 velocity command의 부호, 크기, 정지 동작을 검증하는 것**이었다.
+
+---
+
+### 9.2 Learned Policy 기반 검정 의자 접근
+
+저속 command 검증 이후, 실제 RGB camera와 Gemma 기반 Async pipeline을 사용하여 검정 의자에 접근하는 실험을 수행하였다.
+
+<p align="center">
+  <img src="images/09_limo_black_chair_initial.jpg" width="640">
+</p>
+
+<p align="center">
+  <em>검정 의자 접근 실험의 초기 RGB observation</em>
+</p>
+
+전체 흐름은 다음과 같다.
+
+```text
+LIMO RGB Camera
+       ↓
+Gemma Slow VLA
+       ↓
+Action Feature
+       ↓
+Fast Edge Adapter
+       ↓
+Trajectory
+       ↓
+PD Controller
+       ↓
+Planned Command
+       ↓
+Safety Guard
+       ↓
+LIMO Motion
+```
+
+해당 실험에서는 모델이 생성한 trajectory가 실제 robot motion으로 연결되는지 확인하는 데 초점을 두었다.
+
+---
+
+### 9.3 실물 주행 결과
+
+검정 의자 접근 실험에서 기록된 주요 결과는 다음과 같다.
+
+| 항목 | 결과 |
+|---|---:|
+| Motion Duration | 약 4.012 s |
+| Odometry Path Length | 약 0.312 m |
+| Front LiDAR Distance | 0.448 m |
+| Safety Threshold | 0.450 m |
+
+로봇은 모델이 생성한 trajectory를 기반으로 실제로 이동하였다.
+
+주행 도중 전방 LiDAR 측정값이 다음과 같이 safety threshold보다 작아졌다.
+
+```text
+Measured Distance
+= 0.448 m
+
+Safety Threshold
+= 0.450 m
+```
+
+따라서 Robot-local Safety Guard가 동작하여 이동 명령을 차단하고 로봇을 정지시켰다.
+
+```text
+Model Trajectory
+       ↓
+Robot Motion
+       ↓
+Obstacle Distance 감소
+       ↓
+0.448 m < 0.450 m
+       ↓
+Safety Guard
+       ↓
+STOP
+```
+
+---
+
+### 9.4 결과 해석
+
+본 실험을 통해 다음 pipeline이 실제 로봇에서 연결되어 동작하는 것을 확인하였다.
+
+```text
+Camera
+   ↓
+Gemma
+   ↓
+Async Edge
+   ↓
+Trajectory
+   ↓
+Controller
+   ↓
+ROS 2
+   ↓
+Safety Guard
+   ↓
+Physical Robot Motion
+```
+
+즉, simulation에서만 동작하던 모델 출력을 실제 LIMO Pro의 물리적 움직임까지 연결하였다.
+
+다만 로봇은 safety threshold에 의해 정지했기 때문에 다음과 같이 표현한다.
+
+**검증된 것**
+
+- 모델 기반 trajectory 생성
+- ROS 2 command 전달
+- 실제 LIMO Pro 물리 구동
+- LiDAR safety stop
+
+**아직 검증되지 않은 것**
+
+- 자연어 목표물에 대한 실제 도착
+- 안정적인 closed-loop navigation
+- 장애물 우회
+- 실제 환경의 Sync / Async 성능 비교
+
+따라서 본 실험은 **실물 목표 도착 성공이 아니라 Model-to-Robot pipeline의 부분적인 closed-loop 동작 검증**으로 해석한다.
+
+---
+
+### 9.5 실제 주행 중 초기 우회전 현상
+
+검정 의자 접근 실험에서는 주행 시작 직후 로봇이 바로 우측으로 회전하는 현상이 관찰되었다.
+
+저장된 첫 waypoint를 분석한 결과, 초기 waypoint가 로봇 전방 기준 약 **18.64° 우측**을 가리키고 있었다.
+
+```text
+Robot Forward Direction
+        ↑
+        │
+        │
+        └──── First Waypoint
+               ~18.64° Right
+```
+
+즉, 실제 controller가 임의로 우회전을 만든 것이 아니라 모델이 생성한 초기 trajectory 자체가 이미 우측 방향을 포함하고 있었다.
+
+가능한 원인은 다음과 같이 추정하였다.
+
+- visual representation의 실제 환경 일반화 문제
+- 학습 데이터의 trajectory distribution
+- 실제 카메라와 학습 camera 사이의 차이
+- trajectory scale 문제
+- camera extrinsic calibration
+- 실제 물체 위치와 model representation의 차이
+
+현재 하나의 원인으로 확정하지는 않았다.
+
+---
+
+### 9.6 PD Controller Saturation
+
+실물 주행 분석 과정에서 원본 PD controller의 velocity clipping이 trajectory의 실제 curvature를 변화시킬 수 있다는 점도 확인하였다.
+
+특정 sample에서 원래 trajectory의 angular / linear velocity 비율은 약 다음과 같았다.
+
+```text
+Original w / v
+≈ -0.541 rad/m
+```
+
+그러나 linear velocity와 angular velocity를 각각 독립적으로 clipping하면서 실제 출력 비율은 약 다음 수준으로 변하였다.
+
+```text
+Clipped w / v
+≈ -2 rad/m
+```
+
+즉, 독립적인 saturation으로 인해 실제 로봇의 회전이 원래 trajectory보다 강해질 수 있다.
+
+이를 줄이기 위한 대안 controller도 offline에서 시험하였으나 trajectory tracking error가 증가하여 현재 실물 시스템에는 적용하지 않았다.
+
+---
+
+### 9.7 Safety Stop과 Goal Arrival 구분
+
+현재 LiDAR Safety Guard는 obstacle avoidance planner가 아니다.
+
+동작은 다음과 같다.
+
+```text
+Obstacle 발견
+      ↓
+Distance Threshold 확인
+      ↓
+STOP
+```
+
+따라서 검정 의자 앞에서 로봇이 정지했다고 해서 이를 목표 도착 성공으로 평가하지 않는다.
+
+현재 실험에서의 정지는
+
+```text
+Goal Reached
+```
+
+가 아니라
+
+```text
+Safety Threshold Triggered
+```
+
+에 해당한다.
+
+본 프로젝트에서는 **안전 정지와 navigation success를 별개의 metric으로 구분**한다.
+
+---
+
+### 9.8 Live Runtime Latency
+
+실물 테스트 session에서 저장된 proposal log를 이용하여 runtime latency도 분석하였다.
+
+총 **668개의 proposal log**에서 확인된 평균 값은 다음과 같다.
+
+| Metric | Mean |
+|---|---:|
+| Slow VLA Latency | 약 1.405 s |
+| Edge Adapter Latency | 약 0.108 s |
+| RGB Receive Age | 약 0.155 s |
+| Semantic Anchor Age | 약 2.061 s |
+
+Slow VLA inference는 약 1.4초가 소요되었고, Edge Adapter는 약 0.1초 수준으로 동작하였다.
+
+```text
+Slow VLA
+~1.405 s
+
+Fast Edge
+~0.108 s
+```
+
+이를 통해 실제 시스템에서도 Slow / Fast 구조 사이에 상당한 inference time 차이가 존재함을 확인하였다.
+
+---
+
+### 9.9 Semantic Anchor Age
+
+Fast Edge는 최신 RGB observation을 사용할 수 있지만 semantic feature는 Slow VLA가 과거 observation을 사용해 생성한다.
+
+실제 log에서 최신 RGB와 semantic anchor의 timestamp 차이는 평균 약 **2.061초**였다.
+
+```text
+Semantic Feature
+      │
+      │  ~2.061 s
+      │
+Latest RGB
+```
+
+따라서 현재 Async pipeline은 visual correction을 빠르게 수행할 수 있지만, semantic information 자체가 항상 최신 상태인 것은 아니다.
+
+이는 이후 개선해야 할 주요 문제 중 하나이다.
+
+---
+
+### 9.10 실물 실험에서 확인한 범위
+
+현재까지 실제 LIMO Pro에서 확인한 범위는 다음과 같다.
+
+```text
+RGB Camera Input
+      ↓
+Gemma Inference
+      ↓
+Async Slow / Fast Pipeline
+      ↓
+Trajectory Generation
+      ↓
+PD Controller
+      ↓
+ROS 2 Planned Command
+      ↓
+Safety Guard
+      ↓
+Guarded Velocity
+      ↓
+Physical LIMO Motion
+```
+
+즉, **AI model부터 실제 robot motion까지 전체 pipeline을 연결하는 데 성공하였다.**
+
+다만 현재 단계에서는 다음 항목이 남아 있다.
+
+- 실제 자연어 목표 도착
+- 반복적인 실물 Sync / Async 비교
+- 실제 camera extrinsic 및 trajectory scale 검증
+- 안정적인 closed-loop approach
+- obstacle avoidance
+- 장시간 반복 실험
+- 실제 환경에서의 성공 판정 기준 확립
+
+따라서 현재 실물 실험은 **진행 중인 연구 단계**이다.
 
 ---
 
